@@ -17,16 +17,20 @@ WHERE country = 'India';
 -- Show matches played in the last 30 days
 -- =========================================================
 
+-- Question 2
 SELECT
-    match_description,
-    team1,
-    team2,
-    venue_name,
-    venue_city,
-    match_date
-FROM matches
-WHERE match_date >= DATE('now', '-30 days')
-ORDER BY match_date DESC;
+    m.description AS match_description,
+    t1.team_name AS team1,
+    t2.team_name AS team2,
+    v.venue_name,
+    v.city,
+    m.match_date
+FROM matches m
+JOIN teams t1 ON m.team1_id = t1.team_id
+JOIN teams t2 ON m.team2_id = t2.team_id
+JOIN venues v ON m.venue_id = v.venue_id
+WHERE date(m.match_date) >= date('now', '-30 days')
+ORDER BY date(m.match_date) DESC;
 
 
 -- =========================================================
@@ -34,25 +38,26 @@ ORDER BY match_date DESC;
 -- Top 10 highest run scorers in ODI cricket
 -- =========================================================
 
+-- Question 3
 SELECT
-    p.full_name,
-    SUM(pp.runs_scored) AS total_runs,
-    ROUND(AVG(pp.batting_average), 2) AS batting_average,
-    SUM(pp.centuries) AS centuries
-FROM players p
-JOIN player_performance pp
-    ON p.player_id = pp.player_id
-WHERE pp.format = 'ODI'
+    p.full_name AS player_name,
+    SUM(pp.runs) AS total_runs,
+    ROUND(
+        CAST(SUM(pp.runs) AS REAL) / NULLIF(COUNT(pp.performance_id), 0),
+        2
+    ) AS batting_average,
+    SUM(
+        CASE WHEN pp.runs >= 100 THEN 1 ELSE 0 END
+    ) AS centuries
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.player_id
+JOIN matches m ON pp.match_id = m.match_id
+WHERE UPPER(m.match_type) = 'ODI'
 GROUP BY p.player_id, p.full_name
 ORDER BY total_runs DESC
 LIMIT 10;
 
-
--- =========================================================
--- QUESTION 4
--- Venues with seating capacity greater than 50,000
--- =========================================================
-
+-- Question 4
 SELECT
     venue_name,
     city,
@@ -63,51 +68,32 @@ WHERE capacity > 50000
 ORDER BY capacity DESC;
 
 
--- =========================================================
--- QUESTION 5
--- Number of matches won by each team
--- =========================================================
-
+-- Question 5
 SELECT
-    winner AS team_name,
-    COUNT(*) AS total_wins
-FROM matches
-WHERE winner IS NOT NULL
-GROUP BY winner
+    t.team_name,
+    COUNT(m.match_id) AS total_wins
+FROM teams t
+LEFT JOIN matches m
+    ON t.team_id = m.winner_team_id
+GROUP BY t.team_id, t.team_name
 ORDER BY total_wins DESC;
-
-
--- =========================================================
--- QUESTION 6
--- Count players according to playing role
--- =========================================================
-
+-- Question 6
 SELECT
     playing_role,
     COUNT(*) AS player_count
 FROM players
 GROUP BY playing_role
 ORDER BY player_count DESC;
-
-
--- =========================================================
--- QUESTION 7
--- Highest individual batting score in each format
--- =========================================================
-
+-- Question 7
 SELECT
-    format,
-    MAX(highest_score) AS highest_individual_score
-FROM player_performance
-GROUP BY format
-ORDER BY highest_individual_score DESC;
-
-
--- =========================================================
--- QUESTION 8
--- Cricket series started in 2024
--- =========================================================
-
+    m.match_type AS format,
+    MAX(pp.runs) AS highest_score
+FROM player_performance pp
+JOIN matches m ON pp.match_id = m.match_id
+WHERE UPPER(m.match_type) IN ('TEST', 'ODI', 'T20I')
+GROUP BY m.match_type
+ORDER BY m.match_type;
+-- Question 8
 SELECT
     series_name,
     host_country,
@@ -116,247 +102,187 @@ SELECT
     total_matches
 FROM series
 WHERE strftime('%Y', start_date) = '2024'
-ORDER BY start_date;
-
-
--- =========================================================
--- QUESTION 9
--- All-rounders with more than 1000 runs
--- AND more than 50 wickets
--- =========================================================
-
+ORDER BY date(start_date);
+-- Question 9
 SELECT
-    p.full_name,
-    pp.format,
-    SUM(pp.runs_scored) AS total_runs,
-    SUM(pp.wickets) AS total_wickets
-FROM players p
-JOIN player_performance pp
-    ON p.player_id = pp.player_id
-WHERE p.playing_role = 'All-rounder'
-GROUP BY p.player_id, p.full_name, pp.format
-HAVING SUM(pp.runs_scored) > 1000
+    p.full_name AS player_name,
+    SUM(pp.runs) AS total_runs,
+    SUM(pp.wickets) AS total_wickets,
+    m.match_type AS format
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.player_id
+JOIN matches m ON pp.match_id = m.match_id
+WHERE LOWER(p.playing_role) = 'all-rounder'
+GROUP BY p.player_id, p.full_name, m.match_type
+HAVING SUM(pp.runs) > 1000
    AND SUM(pp.wickets) > 50
 ORDER BY total_runs DESC;
-
-
--- =========================================================
--- QUESTION 10
--- Last 20 completed matches
--- =========================================================
-
+-- Question 10
 SELECT
-    match_description,
-    team1,
-    team2,
-    winner,
-    victory_margin,
-    victory_type,
-    venue_name
-FROM matches
-WHERE status = 'Completed'
-ORDER BY match_date DESC
+    m.description AS match_description,
+    t1.team_name AS team1,
+    t2.team_name AS team2,
+    wt.team_name AS winning_team,
+    m.victory_margin,
+    m.victory_type,
+    v.venue_name
+FROM matches m
+JOIN teams t1 ON m.team1_id = t1.team_id
+JOIN teams t2 ON m.team2_id = t2.team_id
+LEFT JOIN teams wt ON m.winner_team_id = wt.team_id
+LEFT JOIN venues v ON m.venue_id = v.venue_id
+WHERE m.winner_team_id IS NOT NULL
+ORDER BY date(m.match_date) DESC
 LIMIT 20;
-
-
--- =========================================================
--- QUESTION 11
--- Player performance across different formats
--- =========================================================
-
+-- Question 11
+WITH player_formats AS (
+    SELECT
+        p.player_id,
+        p.full_name,
+        m.match_type,
+        SUM(pp.runs) AS format_runs
+    FROM player_performance pp
+    JOIN players p ON pp.player_id = p.player_id
+    JOIN matches m ON pp.match_id = m.match_id
+    GROUP BY p.player_id, p.full_name, m.match_type
+),
+format_summary AS (
+    SELECT
+        player_id,
+        full_name,
+        MAX(CASE WHEN UPPER(match_type) = 'TEST'
+                 THEN format_runs ELSE 0 END) AS test_runs,
+        MAX(CASE WHEN UPPER(match_type) = 'ODI'
+                 THEN format_runs ELSE 0 END) AS odi_runs,
+        MAX(CASE WHEN UPPER(match_type) = 'T20I'
+                 THEN format_runs ELSE 0 END) AS t20i_runs,
+        COUNT(DISTINCT match_type) AS formats_played
+    FROM player_formats
+    GROUP BY player_id, full_name
+)
 SELECT
-    p.full_name,
-
-    SUM(
-        CASE
-            WHEN pp.format = 'Test'
-            THEN pp.runs_scored
-            ELSE 0
-        END
-    ) AS test_runs,
-
-    SUM(
-        CASE
-            WHEN pp.format = 'ODI'
-            THEN pp.runs_scored
-            ELSE 0
-        END
-    ) AS odi_runs,
-
-    SUM(
-        CASE
-            WHEN pp.format = 'T20I'
-            THEN pp.runs_scored
-            ELSE 0
-        END
-    ) AS t20i_runs,
-
-    ROUND(AVG(pp.batting_average), 2)
-        AS overall_batting_average,
-
-    COUNT(DISTINCT pp.format)
-        AS formats_played
-
-FROM players p
-JOIN player_performance pp
-    ON p.player_id = pp.player_id
-
-GROUP BY p.player_id, p.full_name
-
-HAVING COUNT(DISTINCT pp.format) >= 2
-
-ORDER BY overall_batting_average DESC;
-
-
--- =========================================================
--- QUESTION 12
--- Team performance at home vs away
--- =========================================================
-
+    full_name,
+    test_runs,
+    odi_runs,
+    t20i_runs,
+    formats_played
+FROM format_summary
+WHERE formats_played >= 2
+ORDER BY full_name;
+-- Question 12
 SELECT
-    team,
-    playing_condition,
-    COUNT(*) AS matches_played,
+    t.team_name,
+    CASE
+        WHEN v.country = t.country THEN 'Home'
+        ELSE 'Away'
+    END AS match_location,
+    COUNT(m.match_id) AS matches_played,
     SUM(
         CASE
-            WHEN winner = team THEN 1
+            WHEN m.winner_team_id = t.team_id THEN 1
             ELSE 0
         END
     ) AS wins
-FROM
-(
-    SELECT
-        team1 AS team,
-        CASE
-            WHEN venue_country = team1_country
-            THEN 'Home'
-            ELSE 'Away'
-        END AS playing_condition,
-        winner
-    FROM matches
-
-    UNION ALL
-
-    SELECT
-        team2 AS team,
-        CASE
-            WHEN venue_country = team2_country
-            THEN 'Home'
-            ELSE 'Away'
-        END AS playing_condition,
-        winner
-    FROM matches
-)
-GROUP BY team, playing_condition
-ORDER BY team, playing_condition;
-
-
--- =========================================================
--- QUESTION 13
--- Consecutive batsmen with combined score >= 100
--- =========================================================
-
+FROM teams t
+JOIN matches m
+    ON t.team_id IN (m.team1_id, m.team2_id)
+JOIN venues v
+    ON m.venue_id = v.venue_id
+GROUP BY
+    t.team_id,
+    t.team_name,
+    match_location
+ORDER BY t.team_name, match_location;
+-- Question 13
 SELECT
-    a.player_name AS player_1,
-    b.player_name AS player_2,
-    a.innings,
-    (a.runs + b.runs) AS partnership_runs
-FROM batting_performance a
-JOIN batting_performance b
-    ON a.match_id = b.match_id
-    AND a.innings = b.innings
-    AND ABS(a.batting_position - b.batting_position) = 1
-    AND a.batting_position < b.batting_position
-WHERE (a.runs + b.runs) >= 100
+    p1.full_name AS player1,
+    p2.full_name AS player2,
+    m.match_id,
+    pp1.innings,
+    pp1.runs + pp2.runs AS partnership_runs
+FROM player_performance pp1
+JOIN player_performance pp2
+    ON pp1.match_id = pp2.match_id
+    AND pp1.innings = pp2.innings
+    AND ABS(pp1.batting_position - pp2.batting_position) = 1
+    AND pp1.player_id < pp2.player_id
+JOIN players p1 ON pp1.player_id = p1.player_id
+JOIN players p2 ON pp2.player_id = p2.player_id
+JOIN matches m ON pp1.match_id = m.match_id
+WHERE pp1.runs + pp2.runs >= 100
 ORDER BY partnership_runs DESC;
-
-
--- =========================================================
--- QUESTION 14
--- Bowling performance at different venues
--- =========================================================
-
+-- Question 14
+WITH match_bowling AS (
+    SELECT
+        pp.player_id,
+        pp.match_id,
+        m.venue_id,
+        pp.economy_rate,
+        pp.wickets,
+        pp.overs
+    FROM player_performance pp
+    JOIN matches m ON pp.match_id = m.match_id
+    WHERE pp.overs >= 4
+),
+venue_summary AS (
+    SELECT
+        player_id,
+        venue_id,
+        COUNT(DISTINCT match_id) AS matches_played,
+        AVG(economy_rate) AS average_economy_rate,
+        SUM(wickets) AS total_wickets
+    FROM match_bowling
+    GROUP BY player_id, venue_id
+)
 SELECT
-    bowler,
-    venue_name,
-    COUNT(DISTINCT match_id) AS matches_played,
-    ROUND(AVG(economy_rate), 2) AS average_economy_rate,
-    SUM(wickets) AS total_wickets
-FROM bowling_performance
-WHERE overs >= 4
-GROUP BY bowler, venue_name
-HAVING COUNT(DISTINCT match_id) >= 3
+    p.full_name,
+    v.venue_name,
+    matches_played,
+    ROUND(average_economy_rate, 2) AS average_economy_rate,
+    total_wickets
+FROM venue_summary s
+JOIN players p ON s.player_id = p.player_id
+JOIN venues v ON s.venue_id = v.venue_id
+WHERE matches_played >= 3
 ORDER BY average_economy_rate ASC;
-
-
--- =========================================================
--- QUESTION 15
--- Players performing exceptionally in close matches
--- =========================================================
-
+-- Question 15
 SELECT
-    bp.player_name,
-    ROUND(AVG(bp.runs), 2) AS average_runs,
-    COUNT(DISTINCT bp.match_id) AS close_matches_played,
-
+    p.full_name,
+    ROUND(AVG(pp.runs), 2) AS average_runs,
+    COUNT(DISTINCT pp.match_id) AS close_matches_played,
     SUM(
         CASE
-            WHEN m.winner = bp.team
+            WHEN m.winner_team_id IS NOT NULL
             THEN 1
             ELSE 0
         END
-    ) AS team_wins
-
-FROM batting_performance bp
-
-JOIN matches m
-    ON bp.match_id = m.match_id
-
+    ) AS winning_matches
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.player_id
+JOIN matches m ON pp.match_id = m.match_id
 WHERE
     (m.victory_type = 'runs' AND m.victory_margin < 50)
     OR
     (m.victory_type = 'wickets' AND m.victory_margin < 5)
-
-GROUP BY bp.player_name
+GROUP BY p.player_id, p.full_name
 ORDER BY average_runs DESC;
-
-
--- =========================================================
--- QUESTION 16
--- Player batting performance since 2020
--- =========================================================
-
+-- Question 16
 SELECT
     p.full_name,
     strftime('%Y', m.match_date) AS year,
-
-    ROUND(AVG(pp.runs_scored), 2)
-        AS average_runs,
-
-    ROUND(AVG(pp.strike_rate), 2)
-        AS average_strike_rate,
-
-    COUNT(DISTINCT pp.match_id)
-        AS matches_played
-
-FROM players p
-
-JOIN player_performance pp
-    ON p.player_id = pp.player_id
-
-JOIN matches m
-    ON pp.match_id = m.match_id
-
+    ROUND(AVG(pp.runs), 2) AS average_runs_per_match,
+    ROUND(AVG(pp.strike_rate), 2) AS average_strike_rate,
+    COUNT(DISTINCT pp.match_id) AS matches_played
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.player_id
+JOIN matches m ON pp.match_id = m.match_id
 WHERE CAST(strftime('%Y', m.match_date) AS INTEGER) >= 2020
-
 GROUP BY
     p.player_id,
     p.full_name,
     year
-
 HAVING COUNT(DISTINCT pp.match_id) >= 5
-
-ORDER BY year DESC, average_runs DESC;
+ORDER BY year, average_runs_per_match DESC;
 
 
 -- =========================================================
